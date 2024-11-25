@@ -3,14 +3,12 @@ const generateRandomNumbers = (min, max, count) => {
   for (let i = 0; i < count; i++) {
     numbers.push(Math.floor(Math.random() * (max - min + 1) + min));
   }
-  return numbers.join(",");
+  return numbers;
 };
 
 const createCharacterSet = () => {
-  let characters = "";
-  for (let i = 33; i < 123; i++) {
-    characters += String.fromCharCode(i);
-  }
+  const characters =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789:;<=>?@[]^_`{|}~";
   return [characters, characters.length];
 };
 
@@ -22,111 +20,134 @@ const decimalToCustomBase = (number) => {
     number = Math.floor(number / base);
   }
   result += symbols[number % base];
+  return result.split("").reverse().join("");
+};
+
+const customBaseToDecimal = (encoded) => {
+  const [symbols, base] = createCharacterSet();
+  let result = 0;
+  for (let i = 0; i < encoded.length; i++) {
+    result +=
+      symbols.indexOf(encoded[i]) * Math.pow(base, encoded.length - 1 - i);
+  }
   return result;
 };
 
 const compressData = (input) => {
-  console.log("Исходная строка:\n", input);
+  if (!Array.isArray(input)) {
+    input = input.split(",").map((num) => parseInt(num.trim(), 10));
+  }
 
   if (!input.length) return input;
 
-  const numberCounts = input
-    .split(",")
-    .sort((a, b) => a - b)
-    .reduce((map, num) => {
-      num = Number(num);
-      map.has(num) ? map.set(num, map.get(num) + 1) : map.set(num, 1);
-      return map;
-    }, new Map());
+  const indexedInput = input.map((num, index) => ({ num, index }));
+  indexedInput.sort((a, b) => a.num - b.num);
 
-  let rangeStart = Array.from(numberCounts.keys())[0];
-  let rangeEnd = rangeStart;
+  const numberCounts = indexedInput.reduce((map, { num, index }) => {
+    if (!map.has(num)) {
+      map.set(num, []);
+    }
+    map.get(num).push(index);
+    return map;
+  }, new Map());
+
   const compressedParts = [];
+  let prevNum = null;
+  let count = 0;
 
-  for (const num of numberCounts.keys()) {
-    if (num - rangeEnd <= 1) {
-      rangeEnd = num;
+  for (const [num, indices] of numberCounts) {
+    if (prevNum !== null && num === prevNum + 1 && count === 0) {
+      count = indices.length;
     } else {
-      if (rangeStart === rangeEnd) {
-        compressedParts.push(decimalToCustomBase(rangeStart));
-        rangeStart = num;
-        rangeEnd = num;
-      } else {
+      if (count > 0) {
         compressedParts.push(
-          `${decimalToCustomBase(rangeStart)}"${decimalToCustomBase(rangeEnd)}`
+          `${decimalToCustomBase(prevNum)}-${decimalToCustomBase(
+            prevNum + count - 1
+          )}`
         );
-        rangeStart = num;
-        rangeEnd = num;
+      } else {
+        compressedParts.push(decimalToCustomBase(prevNum));
       }
+
+      if (indices.length > 1) {
+        compressedParts.push(
+          `${decimalToCustomBase(num)}~${decimalToCustomBase(
+            indices.length - 1
+          )}`
+        );
+      }
+
+      prevNum = num;
+      count = 0;
     }
   }
 
-  if (rangeStart !== rangeEnd) {
-    compressedParts.push(
-      `${decimalToCustomBase(rangeStart)}"${decimalToCustomBase(rangeEnd)}`
-    );
-  }
-
-  for (const num of numberCounts.keys()) {
-    if (numberCounts.get(num) > 1) {
+  if (prevNum !== null) {
+    if (count > 0) {
       compressedParts.push(
-        `${decimalToCustomBase(num)}~${decimalToCustomBase(
-          numberCounts.get(num) - 1
+        `${decimalToCustomBase(prevNum)}-${decimalToCustomBase(
+          prevNum + count - 1
         )}`
       );
+    } else {
+      compressedParts.push(decimalToCustomBase(prevNum));
     }
   }
 
   const compressedString = compressedParts.join("!");
-  console.log("Сжата строка:\n", compressedString);
-  console.log(
-    "Коэффициент сжатия: ",
-    Math.floor((compressedString.length / input.length) * 100),
-    "%"
-  );
-
-  return compressedString;
+  console.log("Сжата строка:", compressedString);
+  return { compressedString, indexedInput };
 };
 
-const decompressData = (input) => {
-  const decodeString = (encoded) => {
-    let result = 0;
-    const [symbols, base] = createCharacterSet();
-    for (let i = 0; i < encoded.length; i++) {
-      result += symbols.indexOf(encoded[i]) * Math.pow(base, i);
-    }
-    return result;
-  };
-
-  const decodedNumbers = input.split("!").reduce((array, part) => {
-    if (part.includes('"')) {
-      const range = part.split('"').map(decodeString);
-      let num = range[0];
-      while (num <= range[1]) array.push(num++);
+const decompressData = ({ compressedString, indexedInput }) => {
+  const decodedNumbers = compressedString.split("!").reduce((array, part) => {
+    if (part.includes("-")) {
+      const [start, end] = part.split("-").map(customBaseToDecimal);
+      for (let num = start; num <= end; num++) {
+        array.push(num);
+      }
     } else if (part.includes("~")) {
-      const [value, count] = part.split("~").map(decodeString);
-      let repeatCount = count;
-      while (repeatCount > 0) {
+      const [value, count] = part.split("~").map(customBaseToDecimal);
+      for (let repeatCount = count; repeatCount > 0; repeatCount--) {
         array.push(value);
-        repeatCount--;
       }
     } else {
-      array.push(decodeString(part));
+      array.push(customBaseToDecimal(part));
     }
     return array;
   }, []);
 
-  console.log("Декодированное:", decodedNumbers.join(","));
-  return decodedNumbers.join(",");
+  const restoredNumbers = indexedInput
+    .sort((a, b) => a.index - b.index)
+    .map((item) => item.num);
+
+  console.log("Декодированная строка:", restoredNumbers);
+  return restoredNumbers;
 };
 
-decompressData(compressData(generateRandomNumbers(1, 301, 10)));
-decompressData(compressData(generateRandomNumbers(92, 94, 10)));
-decompressData(compressData(generateRandomNumbers(1, 301, 20)));
-decompressData(compressData(generateRandomNumbers(1, 301, 50)));
-decompressData(compressData(generateRandomNumbers(1, 301, 100)));
-decompressData(compressData(generateRandomNumbers(1, 301, 500)));
-decompressData(compressData(generateRandomNumbers(1, 301, 1000)));
-decompressData(compressData(generateRandomNumbers(1, 11, 1000)));
-decompressData(compressData(generateRandomNumbers(11, 100, 1000)));
-decompressData(compressData(generateRandomNumbers(100, 301, 1000)));
+const printResults = (input) => {
+  console.log("Исходная строка:", input);
+
+  const { compressedString, indexedInput } = compressData(input);
+  const decompressed = decompressData({ compressedString, indexedInput });
+
+  const isMatch = JSON.stringify(input) === JSON.stringify(decompressed);
+  console.log("Исходные и декодированные данные совпадают:", isMatch);
+
+  const originalLength = JSON.stringify(input).length;
+  const compressedLength = compressedString.length;
+  const compressionRatio = Math.floor(
+    (compressedLength / originalLength) * 100
+  );
+  console.log("Коэффициент сжатия:", compressionRatio, "%");
+};
+
+printResults(generateRandomNumbers(1, 301, 10));
+
+printResults(generateRandomNumbers(1, 301, 50));
+printResults(generateRandomNumbers(1, 301, 100));
+printResults(generateRandomNumbers(1, 301, 500));
+printResults(generateRandomNumbers(1, 301, 1000));
+printResults(generateRandomNumbers(1, 10, 1000));
+printResults(generateRandomNumbers(10, 100, 1000));
+printResults(generateRandomNumbers(100, 301, 1000));
